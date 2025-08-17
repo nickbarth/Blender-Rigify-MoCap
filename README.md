@@ -1,5 +1,7 @@
 # Blender-Rigify-MoCap
 
+Blender Webcam Motion Capture for Rigify Meta Rig - Upper Body Only
+Captures motion from webcam using MediaPipe and applies to upper body Rigify bones
 
     # Instructions
     
