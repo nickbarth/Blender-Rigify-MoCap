@@ -1,6 +1,10 @@
 """
-Blender Webcam Motion Capture for Rigify Meta Rig - Upper Body Only
-Captures motion from webcam using MediaPipe and applies to upper body Rigify bones
+===== Blender-Rigify-MoCap =====
+
+Blender Webcam Motion Capture for Rigify Meta Rig - Upper Body Only Captures motion from webcam using MediaPipe and applies to upper body Rigify bones
+
+This is free and unencumbered software released into the public domain.
+
 """
 
 import bpy
@@ -46,15 +50,6 @@ mp_drawing_styles = mp.solutions.drawing_styles
 
 class MediaPipeSolver:
     """Use MediaPipe's built-in pose detection and calculations"""
-    
-    @staticmethod
-    def mediapipe_to_blender(vec):
-        """Convert MediaPipe coordinates to Blender coordinate system
-        MediaPipe: X right, Y down, Z forward
-        Blender: X right, Y forward, Z up
-        Conversion: (x, y, z) -> (x, -z, y)
-        """
-        return np.array([vec[0], -vec[2], vec[1]])
     
     @staticmethod
     def calculate_angle(a, b, c):
@@ -109,7 +104,7 @@ class MediaPipeSolver:
     
     @staticmethod
     def calc_arm_rotations(landmarks) -> dict:
-        """Calculate arm rotations from pose landmarks for Rigify with proper coordinate conversion"""
+        """Calculate arm rotations from pose landmarks for Rigify"""
         result = {
             "upper_arm_L": {"x": 0, "y": 0, "z": 0},
             "forearm_L": {"x": 0, "y": 0, "z": 0},
@@ -128,47 +123,39 @@ class MediaPipeSolver:
             elbow = lm[13]
             wrist = lm[15]
             
-            # Get MediaPipe vectors
-            shoulder_vec = np.array([shoulder.x, shoulder.y, shoulder.z])
-            elbow_vec = np.array([elbow.x, elbow.y, elbow.z])
-            wrist_vec = np.array([wrist.x, wrist.y, wrist.z])
-            
-            # Convert to Blender coordinate system
-            shoulder_bl = MediaPipeSolver.mediapipe_to_blender(shoulder_vec)
-            elbow_bl = MediaPipeSolver.mediapipe_to_blender(elbow_vec)
-            wrist_bl = MediaPipeSolver.mediapipe_to_blender(wrist_vec)
-            
-            # Calculate shoulder to elbow vector in Blender space
-            shoulder_to_elbow = elbow_bl - shoulder_bl
+            # Calculate vectors
+            shoulder_to_elbow = np.array([
+                elbow.x - shoulder.x,
+                -(elbow.y - shoulder.y),  # Invert Y (MediaPipe Y is down, we want Y up)
+                elbow.z - shoulder.z
+            ])
             
             # Normalize
             length = np.linalg.norm(shoulder_to_elbow)
             if length > 0.01:
                 shoulder_to_elbow = shoulder_to_elbow / length
                 
-                # For Rigify, calculate rotation from T-pose
-                # In T-pose, left arm points to the left (-X direction)
-                rest_direction = np.array([-1, 0, 0])
+                # For Rigify left arm in rest pose:
+                # - Arm points down and slightly out to the side
+                # - We need to calculate rotation from rest pose to current pose
                 
-                # Calculate rotation needed to align rest_direction with shoulder_to_elbow
-                # Using spherical coordinates for intuitive control
+                # Calculate spherical coordinates
+                # Azimuth (horizontal angle from forward)
+                azimuth = np.arctan2(shoulder_to_elbow[0], -shoulder_to_elbow[2])
                 
-                # Forward/back rotation (around Z axis)
-                forward_angle = np.arctan2(shoulder_to_elbow[1], -shoulder_to_elbow[0])
+                # Elevation (vertical angle)
+                elevation = np.arcsin(np.clip(shoulder_to_elbow[1], -1, 1))
                 
-                # Up/down rotation (around Y axis)
-                horizontal_length = np.sqrt(shoulder_to_elbow[0]**2 + shoulder_to_elbow[1]**2)
-                vertical_angle = np.arctan2(shoulder_to_elbow[2], horizontal_length)
-                
-                # Apply corrective rotations for Rigify bone orientation
-                result["upper_arm_L"]["x"] = vertical_angle  # Up/down
-                result["upper_arm_L"]["y"] = 0  # No twist for now
-                result["upper_arm_L"]["z"] = forward_angle - math.pi/2  # Forward/back (adjusted for T-pose)
+                # Map to Rigify bone rotations
+                # These values are tuned for Rigify's specific bone orientations
+                result["upper_arm_L"]["x"] = -elevation * 1.5  # Raise/lower arm
+                result["upper_arm_L"]["y"] = 0  # No Y rotation for now
+                result["upper_arm_L"]["z"] = -azimuth * 1.2  # Move arm forward/back and side
             
             # Forearm: elbow bend
             elbow_angle = MediaPipeSolver.calculate_angle(shoulder, elbow, wrist)
-            # Rigify expects positive values for elbow bend
-            result["forearm_L"]["y"] = max(0, math.pi - elbow_angle) * 0.8
+            # Rigify expects negative values for elbow bend
+            result["forearm_L"]["y"] = -(math.pi - elbow_angle) * 0.8
         
         # Right arm
         if all(lm[i] for i in [12, 14, 16]):  # shoulder, elbow, wrist
@@ -176,44 +163,30 @@ class MediaPipeSolver:
             elbow = lm[14]
             wrist = lm[16]
             
-            # Get MediaPipe vectors
-            shoulder_vec = np.array([shoulder.x, shoulder.y, shoulder.z])
-            elbow_vec = np.array([elbow.x, elbow.y, elbow.z])
-            wrist_vec = np.array([wrist.x, wrist.y, wrist.z])
-            
-            # Convert to Blender coordinate system
-            shoulder_bl = MediaPipeSolver.mediapipe_to_blender(shoulder_vec)
-            elbow_bl = MediaPipeSolver.mediapipe_to_blender(elbow_vec)
-            wrist_bl = MediaPipeSolver.mediapipe_to_blender(wrist_vec)
-            
-            # Calculate shoulder to elbow vector in Blender space
-            shoulder_to_elbow = elbow_bl - shoulder_bl
+            # Calculate vectors
+            shoulder_to_elbow = np.array([
+                elbow.x - shoulder.x,
+                -(elbow.y - shoulder.y),  # Invert Y
+                elbow.z - shoulder.z
+            ])
             
             # Normalize
             length = np.linalg.norm(shoulder_to_elbow)
             if length > 0.01:
                 shoulder_to_elbow = shoulder_to_elbow / length
                 
-                # For Rigify, calculate rotation from T-pose
-                # In T-pose, right arm points to the right (+X direction)
-                rest_direction = np.array([1, 0, 0])
+                # Calculate spherical coordinates
+                azimuth = np.arctan2(shoulder_to_elbow[0], -shoulder_to_elbow[2])
+                elevation = np.arcsin(np.clip(shoulder_to_elbow[1], -1, 1))
                 
-                # Forward/back rotation (around Z axis)
-                forward_angle = np.arctan2(shoulder_to_elbow[1], shoulder_to_elbow[0])
-                
-                # Up/down rotation (around Y axis)
-                horizontal_length = np.sqrt(shoulder_to_elbow[0]**2 + shoulder_to_elbow[1]**2)
-                vertical_angle = np.arctan2(shoulder_to_elbow[2], horizontal_length)
-                
-                # Apply corrective rotations for Rigify bone orientation
-                result["upper_arm_R"]["x"] = vertical_angle  # Up/down
-                result["upper_arm_R"]["y"] = 0  # No twist for now
-                result["upper_arm_R"]["z"] = forward_angle + math.pi/2  # Forward/back (adjusted for T-pose)
+                # Map to Rigify bone rotations (mirrored for right side)
+                result["upper_arm_R"]["x"] = -elevation * 1.5  # Raise/lower arm
+                result["upper_arm_R"]["y"] = 0  # No Y rotation for now
+                result["upper_arm_R"]["z"] = azimuth * 1.2  # Move arm forward/back and side (opposite sign)
             
             # Forearm: elbow bend
             elbow_angle = MediaPipeSolver.calculate_angle(shoulder, elbow, wrist)
-            # Rigify expects positive values for elbow bend
-            result["forearm_R"]["y"] = max(0, math.pi - elbow_angle) * 0.8
+            result["forearm_R"]["y"] = -(math.pi - elbow_angle) * 0.8
         
         return result
     
@@ -239,18 +212,15 @@ class MediaPipeSolver:
                 right_shoulder.z - left_shoulder.z
             ])
             
-            # Convert to Blender space
-            shoulder_vec_bl = MediaPipeSolver.mediapipe_to_blender(shoulder_vec)
-            
             # Calculate lean from shoulder tilt
-            spine_rot["z"] = np.arctan2(shoulder_vec_bl[2], abs(shoulder_vec_bl[0]) + 0.1) * 0.3
+            spine_rot["z"] = np.arctan2(shoulder_vec[1], abs(shoulder_vec[0]) + 0.1) * 0.3
             
             # Forward/backward lean from shoulder depth
             shoulder_center_z = (left_shoulder.z + right_shoulder.z) / 2
             spine_rot["x"] = -shoulder_center_z * 0.5
             
             # Rotation from shoulder line
-            spine_rot["y"] = np.arctan2(shoulder_vec_bl[1], shoulder_vec_bl[0]) * 0.3
+            spine_rot["y"] = np.arctan2(shoulder_vec[2], shoulder_vec[0]) * 0.3
         
         return spine_rot
 
@@ -465,11 +435,8 @@ class WebcamMotionCapture:
         # Store current bone rotations for display
         self.current_bone_rotations = {}
         
-        # Arm correction quaternions for T-pose alignment
-        self.arm_corrections = {
-            'upper_arm.L': Quaternion((1.0, 0.0, 0.0), math.radians(0)),  # Adjust if needed
-            'upper_arm.R': Quaternion((1.0, 0.0, 0.0), math.radians(0)),  # Adjust if needed
-        }
+        # Store rest pose rotations for offset
+        self.rest_pose_rotations = {}
         
         # Debug counter
         self.debug_counter = 0
@@ -481,6 +448,26 @@ class WebcamMotionCapture:
                 raise ValueError(f"{armature_name} is not an armature")
         else:
             raise ValueError(f"Armature {armature_name} not found")
+        
+        # Store rest pose rotations
+        self.store_rest_pose()
+    
+    def store_rest_pose(self):
+        """Store the rest pose rotations of bones"""
+        if not self.armature:
+            return
+        
+        # Temporarily switch to edit mode to get rest pose
+        current_mode = bpy.context.mode
+        bpy.context.view_layer.objects.active = self.armature
+        
+        # Store current pose
+        pose_bones = self.armature.pose.bones
+        for bone_name in ['upper_arm.L', 'upper_arm.R', 'forearm.L', 'forearm.R']:
+            if bone_name in pose_bones:
+                bone = pose_bones[bone_name]
+                # Get the rest pose matrix
+                self.rest_pose_rotations[bone_name] = bone.bone.matrix_local.to_euler()
     
     def start_subprocess(self):
         """Start the motion capture subprocess"""
@@ -584,7 +571,7 @@ class WebcamMotionCapture:
         return (smoothed['x'], smoothed['y'], smoothed['z'])
     
     def apply_motion_to_bones(self):
-        """Apply captured motion to Rigify bones (UPPER BODY ONLY) with proper corrections"""
+        """Apply captured motion to Rigify bones (UPPER BODY ONLY)"""
         with self.data_lock:
             motion_data = self.latest_motion_data
             self.latest_motion_data = None
@@ -632,25 +619,29 @@ class WebcamMotionCapture:
                     bone.rotation_euler = Euler(euler_rot, 'XYZ')
                     self.current_bone_rotations[bone_name] = euler_rot
         
-        # Apply arm rotations with proper Rigify mapping and corrections
+        # Apply arm rotations with proper Rigify mapping
         if 'arms' in motion_data:
             arms = motion_data['arms']
             
             # Left arm
             if 'upper_arm.L' in pose_bones and 'upper_arm_L' in arms:
                 arm_rot = arms['upper_arm_L']
+                
+                # Apply rotation relative to rest pose
+                base_rotation = self.rest_pose_rotations.get('upper_arm.L', Euler((0, 0, 0)))
+                
                 smoothed = self.smooth_rotation('upper_arm.L', arm_rot)
                 bone = pose_bones['upper_arm.L']
-                bone.rotation_mode = 'QUATERNION'
+                bone.rotation_mode = 'XYZ'
                 
-                # Create rotation quaternion from Euler angles
-                euler_rot = Euler(smoothed, 'XYZ')
-                rot_quat = euler_rot.to_quaternion()
+                # Apply as offset from rest pose
+                final_rotation = Euler((
+                    base_rotation.x + smoothed[0],
+                    base_rotation.y + smoothed[1],
+                    base_rotation.z + smoothed[2]
+                ), 'XYZ')
                 
-                # Apply arm correction for T-pose alignment
-                corrected_quat = self.arm_corrections['upper_arm.L'] @ rot_quat
-                bone.rotation_quaternion = corrected_quat
-                
+                bone.rotation_euler = final_rotation
                 self.current_bone_rotations['upper_arm.L'] = smoothed
             
             if 'forearm.L' in pose_bones and 'forearm_L' in arms:
@@ -664,18 +655,22 @@ class WebcamMotionCapture:
             # Right arm
             if 'upper_arm.R' in pose_bones and 'upper_arm_R' in arms:
                 arm_rot = arms['upper_arm_R']
+                
+                # Apply rotation relative to rest pose
+                base_rotation = self.rest_pose_rotations.get('upper_arm.R', Euler((0, 0, 0)))
+                
                 smoothed = self.smooth_rotation('upper_arm.R', arm_rot)
                 bone = pose_bones['upper_arm.R']
-                bone.rotation_mode = 'QUATERNION'
+                bone.rotation_mode = 'XYZ'
                 
-                # Create rotation quaternion from Euler angles
-                euler_rot = Euler(smoothed, 'XYZ')
-                rot_quat = euler_rot.to_quaternion()
+                # Apply as offset from rest pose
+                final_rotation = Euler((
+                    base_rotation.x + smoothed[0],
+                    base_rotation.y + smoothed[1],
+                    base_rotation.z + smoothed[2]
+                ), 'XYZ')
                 
-                # Apply arm correction for T-pose alignment
-                corrected_quat = self.arm_corrections['upper_arm.R'] @ rot_quat
-                bone.rotation_quaternion = corrected_quat
-                
+                bone.rotation_euler = final_rotation
                 self.current_bone_rotations['upper_arm.R'] = smoothed
             
             if 'forearm.R' in pose_bones and 'forearm_R' in arms:
@@ -707,11 +702,7 @@ class WebcamMotionCapture:
         for bone_name in target_bones:
             if bone_name in self.armature.pose.bones:
                 bone = self.armature.pose.bones[bone_name]
-                # Use quaternion for upper arms to apply corrections
-                if bone_name.startswith('upper_arm'):
-                    bone.rotation_mode = 'QUATERNION'
-                else:
-                    bone.rotation_mode = 'XYZ'
+                bone.rotation_mode = 'XYZ'
                 initialized.append(bone_name)
         
         print(f"Initialized {len(initialized)} upper body bones for motion capture: {initialized}")
@@ -851,6 +842,8 @@ class MOCAP_OT_reset_pose(bpy.types.Operator):
             
             # Reset all bone transformations
             for bone in mocap_instance.armature.pose.bones:
+                # Set rotation mode to Euler XYZ
+                bone.rotation_mode = 'XYZ'
                 # Reset transformations
                 bone.rotation_euler = Euler((0, 0, 0), 'XYZ')
                 bone.rotation_quaternion = Quaternion((1, 0, 0, 0))
@@ -986,3 +979,36 @@ if __name__ == "__main__":
         pass
     
     register()
+    
+    # Instructions
+    print("""
+    ===== Blender-Rigify-MoCap =====
+
+    Blender Webcam Motion Capture for Rigify Meta Rig - Upper Body Only Captures motion from webcam using MediaPipe and applies to upper body Rigify bones
+    
+    FEATURES:
+    - Improved arm tracking with spherical coordinate mapping
+    - Rest pose offset compensation
+    - Mirror effect on webcam (more intuitive)
+    - XYZ rotation values displayed on webcam preview
+    - XYZ rotation values shown in Blender panel
+    - Upper body tracking only (no legs/pelvis)
+    
+    SETUP:
+    1. Install required packages in Blender's Python:
+       - opencv-python: pip install opencv-python
+       - mediapipe: pip install mediapipe
+       - numpy: pip install numpy
+    2. Make sure your armature is named "metarig"
+    3. Run this script in Blender's Text Editor
+    
+    USAGE:
+    1. Find "Motion Capture" panel in 3D Viewport sidebar (press N)
+    2. Click "Reset Pose" to return to rest position
+    3. Click "Start Motion Capture" to begin capturing
+    4. Stand in front of camera with upper body visible
+    5. Watch XYZ rotation values in both webcam and panel
+    6. Press ESC or click "Stop Motion Capture" to stop
+    
+    ============================================
+    """)
