@@ -7,6 +7,7 @@ Captures motion from webcam using MediaPipe and applies to upper body Rigify bon
 <img width="793" height="526" alt="image" src="https://github.com/user-attachments/assets/3f24c235-254c-464d-9fdb-138235f4bcee" />
 
 
+
     # Instructions
     
     SETUP:
